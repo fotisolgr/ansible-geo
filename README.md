@@ -1,6 +1,6 @@
 # GitLab Geo Ansible Playbook
 
-This Ansible playbook automates the installation and configuration of GitLab Geo between two GitLab Omnibus instances.
+This repository contains Ansible playbooks to automate GitLab Geo configuration for both fresh installations and existing GitLab instances.
 
 ## Overview
 
@@ -8,6 +8,24 @@ GitLab Geo allows you to replicate your GitLab instance to one or more geographi
 - Disaster recovery capabilities
 - Reduced latency for distributed teams
 - Read-only secondary instances that can serve Git operations
+
+## Which Playbook Should I Use?
+
+### For Existing GitLab Installations (RECOMMENDED FOR MOST USERS)
+
+**Use `configure-existing-geo.yml`** if:
+- GitLab is already installed on both servers
+- Your primary has data/repositories you want to replicate
+- You want to enable Geo without reinstalling GitLab
+
+**This is the safest option for production environments.**
+
+### For Fresh Installations
+
+**Use `site.yml`** if:
+- You're installing GitLab from scratch
+- Servers don't have GitLab installed yet
+- You want a complete fresh setup
 
 ## Prerequisites
 
@@ -21,23 +39,32 @@ GitLab Geo allows you to replicate your GitLab instance to one or more geographi
 
 ```
 .
-├── inventory.ini                    # Inventory file with host definitions
-├── site.yml                         # Main playbook
-├── ansible.cfg                      # Ansible configuration
-├── gather-gitlab-info.sh            # Discovery script for existing GitLab servers
+├── inventory.ini                       # Inventory file with host definitions
+├── site.yml                            # Playbook for FRESH installations
+├── configure-existing-geo.yml          # Playbook for EXISTING installations
+├── ansible.cfg                         # Ansible configuration
+├── gather-gitlab-info.sh               # Discovery script for existing GitLab servers
 ├── roles/
-│   ├── gitlab_primary/             # Primary node role
-│   │   ├── defaults/main.yml       # Default variables
-│   │   ├── tasks/main.yml          # Tasks for primary setup
-│   │   ├── templates/gitlab.rb.j2  # GitLab configuration template
-│   │   └── handlers/main.yml       # Handler definitions
-│   └── gitlab_secondary/           # Secondary node role
-│       ├── defaults/main.yml       # Default variables
-│       ├── tasks/main.yml          # Tasks for secondary setup
-│       ├── templates/gitlab.rb.j2  # GitLab configuration template
-│       └── handlers/main.yml       # Handler definitions
-├── group_vars/                     # Group variables directory
-└── host_vars/                      # Host-specific variables directory
+│   ├── gitlab_primary/                 # Primary node role (fresh install)
+│   │   ├── defaults/main.yml           # Default variables
+│   │   ├── tasks/main.yml              # Installation tasks
+│   │   ├── templates/gitlab.rb.j2      # GitLab config template
+│   │   └── handlers/main.yml           # Handler definitions
+│   ├── gitlab_secondary/               # Secondary node role (fresh install)
+│   │   ├── defaults/main.yml           # Default variables
+│   │   ├── tasks/main.yml              # Installation tasks
+│   │   ├── templates/gitlab.rb.j2      # GitLab config template
+│   │   └── handlers/main.yml           # Handler definitions
+│   ├── gitlab_primary_existing/        # Primary role (existing install)
+│   │   ├── defaults/main.yml           # Default variables
+│   │   ├── tasks/main.yml              # Configuration tasks only
+│   │   └── handlers/main.yml           # Handler definitions
+│   └── gitlab_secondary_existing/      # Secondary role (existing install)
+│       ├── defaults/main.yml           # Default variables
+│       ├── tasks/main.yml              # Configuration tasks only
+│       └── handlers/main.yml           # Handler definitions
+├── group_vars/                         # Group variables directory
+└── host_vars/                          # Host-specific variables directory
 ```
 
 ## Configuration
@@ -107,7 +134,94 @@ Before running the playbook:
 
 ## Usage
 
-### Install Both Nodes
+### For Existing GitLab Installations (Most Common)
+
+If your GitLab servers are already installed and running, use the `configure-existing-geo.yml` playbook.
+
+#### Step 1: Update Configuration Variables
+
+Edit `roles/gitlab_primary_existing/defaults/main.yml`:
+```yaml
+gitlab_geo_node_name: "primary"
+postgresql_replication_password: "CHANGE_THIS_STRONG_PASSWORD"
+```
+
+Edit `roles/gitlab_secondary_existing/defaults/main.yml`:
+```yaml
+gitlab_geo_node_name: "secondary"
+gitlab_primary_db_host: "your-primary-hostname-or-ip"
+postgresql_replication_password: "SAME_PASSWORD_AS_PRIMARY"
+```
+
+#### Step 2: Configure Primary Node
+
+```bash
+ansible-playbook -i inventory.ini configure-existing-geo.yml --limit gitlab_primary
+```
+
+This will:
+- Backup your current configuration to `/root/gitlab-config-backups/`
+- Add Geo settings to `/etc/gitlab/gitlab.rb`
+- Configure PostgreSQL for replication
+- Set the node as primary
+- Reconfigure GitLab
+
+#### Step 3: Copy Secrets to Secondary
+
+After primary configuration completes:
+
+```bash
+# Copy secrets from primary to secondary
+scp root@PRIMARY_HOST:/etc/gitlab/gitlab-secrets.json /tmp/
+scp /tmp/gitlab-secrets.json root@SECONDARY_HOST:/etc/gitlab/
+```
+
+#### Step 4: Configure Secondary Node
+
+```bash
+ansible-playbook -i inventory.ini configure-existing-geo.yml --limit gitlab_secondary
+```
+
+This will:
+- Backup current configuration
+- Add Geo secondary settings
+- Configure database connection to primary
+- Reconfigure GitLab
+
+#### Step 5: Register Secondary in Primary UI
+
+1. Log into your **primary** GitLab as admin
+2. Go to **Admin Area → Geo → Nodes**
+3. Click **"New site"** or **"Add site"**
+4. Enter secondary details:
+   - **Name**: secondary (or your custom name)
+   - **URL**: Your secondary's external URL
+5. Click **Save**
+
+#### Step 6: Complete Secondary Setup
+
+SSH to secondary and run:
+
+```bash
+gitlab-ctl reconfigure
+gitlab-rake geo:db:create
+gitlab-rake geo:db:migrate
+gitlab-ctl restart
+```
+
+#### Step 7: Verify Geo Status
+
+On the primary node:
+
+```bash
+gitlab-rake geo:status
+```
+
+You should see replication status for your secondary node.
+
+### For Fresh GitLab Installations
+
+#### Install Both Nodes
 
 Run the complete playbook to set up both primary and secondary nodes:
 
@@ -115,13 +229,13 @@ Run the complete playbook to set up both primary and secondary nodes:
 ansible-playbook -i inventory.ini site.yml
 ```
 
-### Install Only Primary Node
+#### Install Only Primary Node
 
 ```bash
 ansible-playbook -i inventory.ini site.yml --limit gitlab_primary
 ```
 
-### Install Only Secondary Node
+#### Install Only Secondary Node
 
 ```bash
 ansible-playbook -i inventory.ini site.yml --limit gitlab_secondary

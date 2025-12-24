@@ -1,0 +1,97 @@
+---
+- name: Check if GitLab is installed
+  command: gitlab-ctl status
+  register: gitlab_status
+  failed_when: false
+  changed_when: false
+
+- name: Fail if GitLab is not installed
+  fail:
+    msg: "GitLab is not installed on this server. Use the site.yml playbook for fresh installations."
+  when: gitlab_status.rc != 0
+
+- name: Create backup directory for GitLab configs
+  file:
+    path: "{{ gitlab_config_backup_dir }}"
+    state: directory
+    mode: '0700'
+
+- name: Backup current gitlab.rb
+  copy:
+    src: /etc/gitlab/gitlab.rb
+    dest: "{{ gitlab_config_backup_dir }}/gitlab.rb.backup.{{ ansible_date_time.epoch }}"
+    remote_src: yes
+    mode: '0600'
+
+- name: Backup current gitlab-secrets.json
+  copy:
+    src: /etc/gitlab/gitlab-secrets.json
+    dest: "{{ gitlab_config_backup_dir }}/gitlab-secrets.json.backup.{{ ansible_date_time.epoch }}"
+    remote_src: yes
+    mode: '0600'
+  when: ansible_check_mode == false
+
+- name: Check if Geo is already configured
+  shell: grep -q "geo_primary_role\['enable'\] = true" /etc/gitlab/gitlab.rb
+  register: geo_configured
+  failed_when: false
+  changed_when: false
+
+- name: Add Geo primary configuration to gitlab.rb
+  blockinfile:
+    path: /etc/gitlab/gitlab.rb
+    marker: "# {mark} ANSIBLE MANAGED - GEO PRIMARY CONFIGURATION"
+    block: |
+      ## Geo Primary Configuration
+      geo_primary_role['enable'] = true
+      geo_secondary_role['enable'] = false
+
+      ## Geo node name
+      gitlab_rails['geo_node_name'] = '{{ gitlab_geo_node_name }}'
+
+      ## PostgreSQL configuration for replication
+      postgresql['listen_address'] = '0.0.0.0'
+      postgresql['md5_auth_cidr_addresses'] = ['0.0.0.0/0']
+      postgresql['sql_replication_user'] = '{{ postgresql_replication_user }}'
+
+      ## Enable Geo tracking database
+      geo_postgresql['enable'] = true
+    backup: yes
+  when: geo_configured.rc != 0
+  notify: reconfigure gitlab
+
+- name: Reconfigure GitLab to apply Geo settings
+  command: gitlab-ctl reconfigure
+  register: reconfigure_result
+  changed_when: "'gitlab Reconfigured!' in reconfigure_result.stdout"
+
+- name: Set this node as Geo primary
+  command: gitlab-rake geo:set_primary_node
+  register: set_primary_result
+  changed_when: "'primary' in set_primary_result.stdout"
+  failed_when: false
+
+- name: Get PostgreSQL replication password
+  shell: |
+    gitlab-ctl set-replication-password <<< "{{ postgresql_replication_password }}"
+  register: replication_password_result
+  changed_when: true
+  no_log: true
+
+- name: Display primary node information
+  debug:
+    msg: |
+      ========================================
+      Primary Geo Node Configuration Complete
+      ========================================
+
+      Node Name: {{ gitlab_geo_node_name }}
+
+      IMPORTANT NEXT STEPS:
+      1. Copy /etc/gitlab/gitlab-secrets.json to the secondary node
+      2. Save the replication password: {{ postgresql_replication_password }}
+      3. Add the secondary node in Admin Area > Geo > Nodes
+      4. Configure the secondary node
+
+      Backup Location: {{ gitlab_config_backup_dir }}
+      ========================================
