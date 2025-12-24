@@ -1,0 +1,11 @@
+---
+gitlab_edition: gitlab-ee
+gitlab_version: latest
+gitlab_external_url: "https://secondary.example.com"
+gitlab_db_password: "changeme_db_password"
+gitlab_geo_secondary_role_enabled: true
+gitlab_geo_node_name: "secondary"
+gitlab_geo_primary_external_url: "https://primary.example.com"
+gitlab_postgresql_shared_preload_libraries: "pg_stat_statements"
+gitlab_primary_db_host: "primary.example.com"
+gitlab_primary_db_port: 5432

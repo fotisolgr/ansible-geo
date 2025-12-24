@@ -1,0 +1,80 @@
+---
+- name: Install required packages
+  apt:
+    name:
+      - curl
+      - openssh-server
+      - ca-certificates
+      - tzdata
+      - perl
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: Install required packages (RHEL/CentOS)
+  yum:
+    name:
+      - curl
+      - policycoreutils-python-utils
+      - openssh-server
+      - perl
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Add GitLab repository (Debian/Ubuntu)
+  shell: |
+    curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/{{ gitlab_edition }}/script.deb.sh | bash
+  args:
+    creates: /etc/apt/sources.list.d/gitlab_{{ gitlab_edition }}.list
+  when: ansible_os_family == "Debian"
+
+- name: Add GitLab repository (RHEL/CentOS)
+  shell: |
+    curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/{{ gitlab_edition }}/script.rpm.sh | bash
+  args:
+    creates: /etc/yum.repos.d/gitlab_{{ gitlab_edition }}.repo
+  when: ansible_os_family == "RedHat"
+
+- name: Install GitLab
+  package:
+    name: "{{ gitlab_edition }}"
+    state: present
+
+- name: Configure GitLab
+  template:
+    src: gitlab.rb.j2
+    dest: /etc/gitlab/gitlab.rb
+    owner: root
+    group: root
+    mode: '0600'
+  notify: reconfigure gitlab
+
+- name: Reconfigure GitLab
+  command: gitlab-ctl reconfigure
+  changed_when: false
+
+- name: Enable Geo on primary node
+  lineinfile:
+    path: /etc/gitlab/gitlab.rb
+    line: "gitlab_rails['geo_node_name'] = '{{ gitlab_geo_node_name }}'"
+    create: yes
+  notify: reconfigure gitlab
+
+- name: Set primary node
+  command: gitlab-rake geo:set_primary_node
+  changed_when: false
+  ignore_errors: yes
+
+- name: Get database password for Geo
+  shell: |
+    grep -A 1 "gitlab_geo_primary_shared_secret" /etc/gitlab/gitlab-secrets.json | grep "db_key_base" | awk -F'"' '{print $4}'
+  register: geo_db_secret
+  changed_when: false
+  failed_when: false
+
+- name: Display Geo setup information
+  debug:
+    msg: |
+      Primary node configured successfully.
+      Please save the database secret for secondary node configuration.
+      You can retrieve it with: cat /etc/gitlab/gitlab-secrets.json

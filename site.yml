@@ -1,0 +1,12 @@
+---
+- name: Configure GitLab Geo Primary Node
+  hosts: gitlab_primary
+  become: true
+  roles:
+    - gitlab_primary
+
+- name: Configure GitLab Geo Secondary Node
+  hosts: gitlab_secondary
+  become: true
+  roles:
+    - gitlab_secondary

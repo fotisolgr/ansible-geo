@@ -1,0 +1,29 @@
+# Ansible
+*.retry
+*.log
+
+# Secrets and sensitive data
+*secrets*.yml
+*vault*.yml
+*.pem
+*.key
+*.crt
+
+# Host/group vars with sensitive data
+host_vars/*/secrets.yml
+group_vars/*/secrets.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
