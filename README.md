@@ -23,6 +23,8 @@ GitLab Geo allows you to replicate your GitLab instance to one or more geographi
 .
 ├── inventory.ini                    # Inventory file with host definitions
 ├── site.yml                         # Main playbook
+├── ansible.cfg                      # Ansible configuration
+├── gather-gitlab-info.sh            # Discovery script for existing GitLab servers
 ├── roles/
 │   ├── gitlab_primary/             # Primary node role
 │   │   ├── defaults/main.yml       # Default variables
@@ -63,7 +65,38 @@ Update the following variables in the inventory file or create host-specific var
 
 You can also override defaults by creating files in `host_vars/` or `group_vars/`.
 
-### 3. Important Security Notes
+### 3. Discover Existing GitLab Configuration
+
+If you have existing GitLab EE servers and need to gather configuration details, use the included discovery script:
+
+```bash
+# Copy the script to your GitLab server
+scp gather-gitlab-info.sh root@your-gitlab-server:/tmp/
+
+# SSH to the server and run it
+ssh root@your-gitlab-server
+chmod +x /tmp/gather-gitlab-info.sh
+/tmp/gather-gitlab-info.sh
+```
+
+The script will display:
+- Current external URL
+- GitLab version and edition (EE/CE)
+- Geo configuration (if already set up)
+- PostgreSQL settings
+- Server IP addresses and hostname
+- License status
+- Database configuration
+
+Use this information to populate your `inventory.ini` and role variables.
+
+#### Key Configuration Files on Existing GitLab Servers
+
+- **Main config**: `/etc/gitlab/gitlab.rb`
+- **Secrets**: `/etc/gitlab/gitlab-secrets.json` (must be copied to secondary)
+- **Version info**: `/opt/gitlab/version-manifest.txt`
+
+### 4. Important Security Notes
 
 Before running the playbook:
 
