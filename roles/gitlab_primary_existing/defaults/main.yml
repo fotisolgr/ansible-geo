@@ -1,6 +1,0 @@
----
-gitlab_geo_node_name: "primary"
-gitlab_backup_dir: "/var/opt/gitlab/backups"
-gitlab_config_backup_dir: "/root/gitlab-config-backups"
-postgresql_replication_user: "gitlab_replicator"
-postgresql_replication_password: "changeme_replication_password"

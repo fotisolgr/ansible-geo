@@ -1,8 +1,0 @@
----
-gitlab_geo_node_name: "secondary"
-gitlab_backup_dir: "/var/opt/gitlab/backups"
-gitlab_config_backup_dir: "/root/gitlab-config-backups"
-gitlab_primary_db_host: "primary.example.com"
-gitlab_primary_db_port: 5432
-postgresql_replication_user: "gitlab_replicator"
-postgresql_replication_password: "changeme_replication_password"

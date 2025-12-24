@@ -1,80 +1,97 @@
 ---
-- name: Install required packages
-  apt:
-    name:
-      - curl
-      - openssh-server
-      - ca-certificates
-      - tzdata
-      - perl
-    state: present
-    update_cache: yes
-  when: ansible_os_family == "Debian"
+- name: Check if GitLab is installed
+  command: gitlab-ctl status
+  register: gitlab_status
+  failed_when: false
+  changed_when: false
 
-- name: Install required packages (RHEL/CentOS)
-  yum:
-    name:
-      - curl
-      - policycoreutils-python-utils
-      - openssh-server
-      - perl
-    state: present
-  when: ansible_os_family == "RedHat"
+- name: Fail if GitLab is not installed
+  fail:
+    msg: "GitLab is not installed on this server. This playbook only configures existing GitLab installations."
+  when: gitlab_status.rc != 0
 
-- name: Add GitLab repository (Debian/Ubuntu)
-  shell: |
-    curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/{{ gitlab_edition }}/script.deb.sh | bash
-  args:
-    creates: /etc/apt/sources.list.d/gitlab_{{ gitlab_edition }}.list
-  when: ansible_os_family == "Debian"
+- name: Create backup directory for GitLab configs
+  file:
+    path: "{{ gitlab_config_backup_dir }}"
+    state: directory
+    mode: '0700'
 
-- name: Add GitLab repository (RHEL/CentOS)
-  shell: |
-    curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/{{ gitlab_edition }}/script.rpm.sh | bash
-  args:
-    creates: /etc/yum.repos.d/gitlab_{{ gitlab_edition }}.repo
-  when: ansible_os_family == "RedHat"
-
-- name: Install GitLab
-  package:
-    name: "{{ gitlab_edition }}"
-    state: present
-
-- name: Configure GitLab
-  template:
-    src: gitlab.rb.j2
-    dest: /etc/gitlab/gitlab.rb
-    owner: root
-    group: root
+- name: Backup current gitlab.rb
+  copy:
+    src: /etc/gitlab/gitlab.rb
+    dest: "{{ gitlab_config_backup_dir }}/gitlab.rb.backup.{{ ansible_date_time.epoch }}"
+    remote_src: yes
     mode: '0600'
-  notify: reconfigure gitlab
 
-- name: Reconfigure GitLab
-  command: gitlab-ctl reconfigure
+- name: Backup current gitlab-secrets.json
+  copy:
+    src: /etc/gitlab/gitlab-secrets.json
+    dest: "{{ gitlab_config_backup_dir }}/gitlab-secrets.json.backup.{{ ansible_date_time.epoch }}"
+    remote_src: yes
+    mode: '0600'
+  when: ansible_check_mode == false
+
+- name: Check if Geo is already configured
+  shell: grep -q "geo_primary_role\['enable'\] = true" /etc/gitlab/gitlab.rb
+  register: geo_configured
+  failed_when: false
   changed_when: false
 
-- name: Enable Geo on primary node
-  lineinfile:
+- name: Add Geo primary configuration to gitlab.rb
+  blockinfile:
     path: /etc/gitlab/gitlab.rb
-    line: "gitlab_rails['geo_node_name'] = '{{ gitlab_geo_node_name }}'"
-    create: yes
+    marker: "# {mark} ANSIBLE MANAGED - GEO PRIMARY CONFIGURATION"
+    block: |
+      ## Geo Primary Configuration
+      geo_primary_role['enable'] = true
+      geo_secondary_role['enable'] = false
+
+      ## Geo node name
+      gitlab_rails['geo_node_name'] = '{{ gitlab_geo_node_name }}'
+
+      ## PostgreSQL configuration for replication
+      postgresql['listen_address'] = '0.0.0.0'
+      postgresql['md5_auth_cidr_addresses'] = ['0.0.0.0/0']
+      postgresql['sql_replication_user'] = '{{ postgresql_replication_user }}'
+
+      ## Enable Geo tracking database
+      geo_postgresql['enable'] = true
+    backup: yes
+  when: geo_configured.rc != 0
   notify: reconfigure gitlab
 
-- name: Set primary node
-  command: gitlab-rake geo:set_primary_node
-  changed_when: false
-  ignore_errors: yes
+- name: Reconfigure GitLab to apply Geo settings
+  command: gitlab-ctl reconfigure
+  register: reconfigure_result
+  changed_when: "'gitlab Reconfigured!' in reconfigure_result.stdout"
 
-- name: Get database password for Geo
-  shell: |
-    grep -A 1 "gitlab_geo_primary_shared_secret" /etc/gitlab/gitlab-secrets.json | grep "db_key_base" | awk -F'"' '{print $4}'
-  register: geo_db_secret
-  changed_when: false
+- name: Set this node as Geo primary
+  command: gitlab-rake geo:set_primary_node
+  register: set_primary_result
+  changed_when: "'primary' in set_primary_result.stdout"
   failed_when: false
 
-- name: Display Geo setup information
+- name: Get PostgreSQL replication password
+  shell: |
+    gitlab-ctl set-replication-password <<< "{{ postgresql_replication_password }}"
+  register: replication_password_result
+  changed_when: true
+  no_log: true
+
+- name: Display primary node information
   debug:
     msg: |
-      Primary node configured successfully.
-      Please save the database secret for secondary node configuration.
-      You can retrieve it with: cat /etc/gitlab/gitlab-secrets.json
+      ========================================
+      Primary Geo Node Configuration Complete
+      ========================================
+
+      Node Name: {{ gitlab_geo_node_name }}
+
+      IMPORTANT NEXT STEPS:
+      1. Copy /etc/gitlab/gitlab-secrets.json to the secondary node
+      2. Save the replication password: {{ postgresql_replication_password }}
+      3. Add the secondary node in Admin Area > Geo > Nodes
+      4. Configure the secondary node
+
+      Backup Location: {{ gitlab_config_backup_dir }}
+      ========================================

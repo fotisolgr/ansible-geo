@@ -1,11 +1,14 @@
 ---
-- name: Configure GitLab Geo Primary Node
+# Playbook for configuring GitLab Geo on existing GitLab installations
+# This playbook is designed for GitLab servers that are already installed
+
+- name: Configure Geo on Primary Node
   hosts: gitlab_primary
   become: true
   roles:
     - gitlab_primary
 
-- name: Configure GitLab Geo Secondary Node
+- name: Configure Geo on Secondary Node
   hosts: gitlab_secondary
   become: true
   roles:
